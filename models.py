@@ -1,11 +1,12 @@
 import enum
 from collections import defaultdict
 from typing import List, Set, Any, Tuple, Dict
-
+import scipy
 import nltk
+import numpy as np
 from sklearn.model_selection import train_test_split
 
-from inference_methods import viterbi
+from inference_methods import viterbi, gibbs_sampling
 
 
 # Needed since we want different defaults if it is in or not in the dictionary
@@ -34,7 +35,7 @@ class HMM:
         self.transition_matrix: List[List[float]] = None
         self.vocabulary: Set[Any] = None
         self.possible_hiddens: List[Any] = None
-        self._hidden_to_idx: Dict[Any, int] = defaultdict(int)
+        self.hidden_to_idx: Dict[Any, int] = defaultdict(int)
         self._hidden_occurences: Dict[Any, int] = defaultdict(int)
 
     def _build_emission_probabilities(self, observed_and_hidden: List[Tuple[Any, Any]]):
@@ -64,8 +65,8 @@ class HMM:
                 next_hidden = observed_and_hidden[idx + 1][1]
             except IndexError:
                 break
-            cur_idx = self._hidden_to_idx[cur_hidden]
-            next_idx = self._hidden_to_idx[next_hidden]
+            cur_idx = self.hidden_to_idx[cur_hidden]
+            next_idx = self.hidden_to_idx[next_hidden]
             hidden_combined_to_count[(cur_idx, next_idx)] += 1
             hidden_combined_to_denominator_key[(cur_idx, next_idx)] = cur_hidden
 
@@ -73,23 +74,31 @@ class HMM:
         for cur_idx in range(len(self.possible_hiddens)):
             sub_list = []
             for next_idx in range(len(self.possible_hiddens)):
-                numerator = hidden_combined_to_count[(cur_idx, next_idx)]
-                denominator = self._hidden_occurences[hidden_combined_to_denominator_key[(cur_idx, next_idx)]]
-                sub_list.append(numerator / denominator)
-            final_list.append(sub_list)
+                if (cur_idx, next_idx) not in hidden_combined_to_denominator_key:
+                    # These two tags never appear together in the dataset, make it a small non-zero
+                    # value (type of smoothing)
+                    sub_list.append(1E-5)
+                else:
+                    numerator = hidden_combined_to_count[(cur_idx, next_idx)]
+                    denominator = self._hidden_occurences[hidden_combined_to_denominator_key[(cur_idx, next_idx)]]
+                    sub_list.append(numerator / denominator)
+            # softmax so that we don't have to worry about an invalid probability dist from
+            # the case where tags don't appear together
+            final_list.append(np.array(sub_list) / sum(sub_list))
         self.transition_matrix = final_list
 
     def fit(self, observed_and_hidden):
         """
         Fits model to the data
         """
-        self.vocabulary, self.possible_hiddens = set(), set()
+        self.vocabulary, self.possible_hiddens = set(), []
         for observed, hidden in observed_and_hidden:
             self.vocabulary.add(observed)
-            self.possible_hiddens.add(hidden)
+            if hidden not in self.possible_hiddens:
+                self.possible_hiddens.append(hidden)
 
         for idx, hidden in enumerate(self.possible_hiddens):
-            self._hidden_to_idx[hidden] = idx
+            self.hidden_to_idx[hidden] = idx
 
         default_probability: float = 1 / len(self.possible_hiddens)
 
@@ -108,13 +117,20 @@ class HMM:
         if algorithm == InferenceMethods.VITERBI:
             num_correct: int = 0
             for seq in test_data:
-                out = viterbi([i[0] for i in seq], list(self.possible_hiddens), self.transition_matrix,
+                out = viterbi([i[0] for i in seq], self.possible_hiddens, self.transition_matrix,
                               self.observed_to_emission_probabilities)
                 num_correct += len([i for idx, i in enumerate(out) if i == seq[idx][1]])
 
             return num_correct / len(test_tagged_words)
         elif algorithm == InferenceMethods.GIBBS:
-            raise NotImplementedError("Gibbs isn't Implemented!")
+            num_correct: int = 0
+            for seq in test_data:
+                out = gibbs_sampling([i[0] for i in seq], self.possible_hiddens, self.transition_matrix,
+                                     self.observed_to_emission_probabilities, self.hidden_to_idx)
+                # print(seq)
+                num_correct += len([i for idx, i in enumerate(out) if i == seq[idx][1]])
+            print(num_correct / len(test_tagged_words))
+            # raise NotImplementedError("Gibbs isn't Implemented!")
         elif algorithm == InferenceMethods.VARIATIONAL_INFERENCE:
             raise NotImplementedError("Variational Inference is not Implemented!")
         elif algorithm == InferenceMethods.CONSTRAINED_INFERENCE:
@@ -125,7 +141,8 @@ class HMM:
 
 if __name__ == "__main__":
     # Sanity checks
-    nltk_data = list(nltk.corpus.treebank.tagged_sents(tagset="universal"))
+    np.random.seed(225530)
+    nltk_data = list(nltk.corpus.treebank.tagged_sents())
     train_set, test_set = train_test_split(nltk_data, train_size=0.95, test_size=0.05, random_state=123)
     train_tagged_words = [tup for sent in train_set for tup in sent]
     test_tagged_words = [tup for sent in test_set for tup in sent]
@@ -160,10 +177,12 @@ if __name__ == "__main__":
             local_sent.append(item)
 
     # Sanity Check
-    for sentence in sentences[0:3]:
-        print([i[0] for i in sentence])
-        print([i[1] for i in sentence])
-        print(viterbi([i[0] for i in sentence], list(test.possible_hiddens), test.transition_matrix,
-                      test.observed_to_emission_probabilities))
-    correct = test.inference(sentences)
+    # for sentence in sentences[0:3]:
+    #     print([i[0] for i in sentence])
+    #     print([i[1] for i in sentence])
+    #     print(viterbi([i[0] for i in sentence], test.possible_hiddens, test.transition_matrix,
+    #                   test.observed_to_emission_probabilities))
+    correct = test.inference(sentences, algorithm=InferenceMethods.VITERBI)
+    print(correct)
+    correct = test.inference(sentences, algorithm=InferenceMethods.GIBBS)
     print(correct)
