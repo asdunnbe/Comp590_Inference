@@ -1,13 +1,14 @@
+import enum
 from collections import defaultdict
 from typing import List, Set, Any, Tuple, Dict
 
 import nltk
 from sklearn.model_selection import train_test_split
 
-# Needed since we want different defaults if it is in or not in the dictionary
 from inference_methods import viterbi
 
 
+# Needed since we want different defaults if it is in or not in the dictionary
 class keydefaultdict(defaultdict):
     def __missing__(self, key):
         if self.default_factory is None:
@@ -15,6 +16,14 @@ class keydefaultdict(defaultdict):
         else:
             ret = self[key] = self.default_factory(key)
             return ret
+
+
+class InferenceMethods(enum.Enum):
+    VITERBI = 0
+    VARIATIONAL_INFERENCE = 1
+    CONSTRAINED_INFERENCE = 2
+    INTEGER_PROGRAMMING = 3
+    GIBBS = 4
 
 
 class HMM:
@@ -30,8 +39,7 @@ class HMM:
 
     def _build_emission_probabilities(self, observed_and_hidden: List[Tuple[Any, Any]]):
         """
-        Part B:
-        Calculates p(w | tag) by doing p(w and tag) / p ( tag)
+        Builds emission probabilities by looping through the training data only once
         """
         for observed, hidden in observed_and_hidden:
             self.observed_to_emission_probabilities[observed][hidden] += 1
@@ -40,16 +48,20 @@ class HMM:
         for possible_words in self.vocabulary:
             for hiddens in self.possible_hiddens:
                 current_count = self.observed_to_emission_probabilities[possible_words][hiddens]
-                self.observed_to_emission_probabilities[possible_words][hiddens] = current_count / self._hidden_occurences[
-                    hiddens]
+                self.observed_to_emission_probabilities[possible_words][hiddens] = current_count / \
+                                                                                   self._hidden_occurences[
+                                                                                       hiddens]
 
     def _build_transition_probabilities(self, observed_and_hidden: List[Tuple[Any, Any]]):
+        """
+        Builds transition probabilities by looping through the training data only once
+        """
         hidden_combined_to_denominator_key: Dict[Tuple[int, 2], Any] = {}
         hidden_combined_to_count: Dict[Tuple[int, 2], int] = defaultdict(int)
         for idx, obv_and_hid in enumerate(observed_and_hidden):
             cur_hidden = obv_and_hid[1]
             try:
-                next_hidden = observed_and_hidden[idx+1][1]
+                next_hidden = observed_and_hidden[idx + 1][1]
             except IndexError:
                 break
             cur_idx = self._hidden_to_idx[cur_hidden]
@@ -68,6 +80,9 @@ class HMM:
         self.transition_matrix = final_list
 
     def fit(self, observed_and_hidden):
+        """
+        Fits model to the data
+        """
         self.vocabulary, self.possible_hiddens = set(), set()
         for observed, hidden in observed_and_hidden:
             self.vocabulary.add(observed)
@@ -79,9 +94,33 @@ class HMM:
         default_probability: float = 1 / len(self.possible_hiddens)
 
         # Handles unknown words with 1/K
-        self.observed_to_emission_probabilities = keydefaultdict(lambda x: defaultdict(int) if x in self.vocabulary else defaultdict(lambda: default_probability))
+        self.observed_to_emission_probabilities = keydefaultdict(
+            lambda x: defaultdict(int) if x in self.vocabulary else defaultdict(lambda: default_probability))
         self._build_emission_probabilities(observed_and_hidden)
         self._build_transition_probabilities(observed_and_hidden)
+
+    def inference(self, test_data, algorithm: InferenceMethods = InferenceMethods.VITERBI):
+        """
+        # TODO: Implement Remaining Methods
+        # TODO: Test time-to-infer
+        # TODO: Report all evaluation metrics we care about
+        """
+        if algorithm == InferenceMethods.VITERBI:
+            num_correct: int = 0
+            for seq in test_data:
+                out = viterbi([i[0] for i in seq], list(self.possible_hiddens), self.transition_matrix,
+                              self.observed_to_emission_probabilities)
+                num_correct += len([i for idx, i in enumerate(out) if i == seq[idx][1]])
+
+            return num_correct / len(test_tagged_words)
+        elif algorithm == InferenceMethods.GIBBS:
+            raise NotImplementedError("Gibbs isn't Implemented!")
+        elif algorithm == InferenceMethods.VARIATIONAL_INFERENCE:
+            raise NotImplementedError("Variational Inference is not Implemented!")
+        elif algorithm == InferenceMethods.CONSTRAINED_INFERENCE:
+            raise NotImplementedError("Constrained Inference is not Implemented!")
+        elif algorithm == InferenceMethods.INTEGER_PROGRAMMING:
+            raise NotImplementedError("Integer Programming is not Implemented!")
 
 
 if __name__ == "__main__":
@@ -105,7 +144,7 @@ if __name__ == "__main__":
         running_sum = 0
         for idx_2, potential_tags_2 in enumerate(test.possible_hiddens):
             running_sum += test.transition_matrix[idx][idx_2]
-        print(running_sum==1, running_sum)
+        print(running_sum == 1, running_sum)
 
     sentences = []
     local_sent = []
@@ -124,11 +163,7 @@ if __name__ == "__main__":
     for sentence in sentences[0:3]:
         print([i[0] for i in sentence])
         print([i[1] for i in sentence])
-        print(viterbi([i[0] for i in sentence], list(test.possible_hiddens), test.transition_matrix, test.observed_to_emission_probabilities))
-
-    num_correct = 0
-    for sentence in sentences:
-        out = viterbi([i[0] for i in sentence], list(test.possible_hiddens), test.transition_matrix, test.observed_to_emission_probabilities)
-        num_correct += len([i for idx, i in enumerate(out) if i == sentence[idx][1]])
-
-    print(num_correct / len(test_tagged_words))
+        print(viterbi([i[0] for i in sentence], list(test.possible_hiddens), test.transition_matrix,
+                      test.observed_to_emission_probabilities))
+    correct = test.inference(sentences)
+    print(correct)
