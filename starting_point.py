@@ -1,14 +1,13 @@
+from typing import List, Any
+
 import nltk
 import numpy as np
 import pandas as pd
 import random
 from sklearn.model_selection import train_test_split
 
-# nltk.download('treebank')
-# nltk.download('universal_tagset')
 nltk_data = list(nltk.corpus.treebank.tagged_sents(tagset="universal"))
 train_set, test_set = train_test_split(nltk_data, train_size=0.95, test_size=0.05, random_state=123)
-
 train_tagged_words = [tup for sent in train_set for tup in sent]
 test_tagged_words = [tup for sent in test_set for tup in sent]
 test_words_without_tags = [tup[0] for sent in test_set for tup in sent]
@@ -18,9 +17,10 @@ print(len(test_words_without_tags))
 vocabulary = set([i[0] for i in train_tagged_words])
 print(f"Part A: There are {len(vocabulary)} in the treebank training set")
 
-
 # TODO: Verify correctness
 em_dict = {}
+
+
 def emission_probability(word, tag):
     """
     Part B:
@@ -30,7 +30,6 @@ def emission_probability(word, tag):
 
     if word not in vocabulary:
         return 1 / len(unique_tags)
-
 
     if f"{word}_{tag}" in em_dict:
         return em_dict[f"{word}_{tag}"]
@@ -70,75 +69,19 @@ def transition_probability(tag1, tag2):
     return found / total
 
 
-transition_matrix = []
-for tag1 in unique_tags:
-    local = []
-    for tag2 in unique_tags:
-        local.append(transition_probability(tag1, tag2))
-    transition_matrix.append(local)
-
-print(f"Question D: T is {len(unique_tags)}")
-for i in range(3):
-    print(f"Question D: row {i} is {[round(i, 3) for i in transition_matrix[i]]}")
-
-
-def score(y, x, i, pre_comp_table=None):
-    # computes score(y, i)
-    if pre_comp_table is None:
-        pre_comp_table = {}
-
-    if i == 0:
-        return emission_probability(x[i], y), ["<START>"]
-
-    max_s = 0
-    max_prev_y = None
-    best_prev = []
-    best_possible_y = None
-    for possible_y in unique_tags:
-        if i - 1 in pre_comp_table:
-            if possible_y in pre_comp_table[i - 1]:
-                prev_score, prev_y = pre_comp_table[i - 1][possible_y]
-            else:
-                prev_score, prev_y = score(possible_y, x, i - 1, pre_comp_table)
-                pre_comp_table[i - 1][possible_y] = [prev_score, prev_y]
-        else:
-            prev_score, prev_y = score(possible_y, x, i - 1, pre_comp_table)
-            pre_comp_table[i - 1] = {}
-            pre_comp_table[i - 1][possible_y] = [prev_score, prev_y]
-        if (new_max := transition_probability(possible_y, y) * emission_probability(x[i], y) * prev_score) > max_s:
-            max_s = new_max
-            best_possible_y = possible_y
-            best_prev = prev_y
-
-    best_prev.append(best_possible_y)
-    return max_s, best_prev
+# transition_matrix = []
+# for tag1 in unique_tags:
+#     local = []
+#     for tag2 in unique_tags:
+#         local.append(transition_probability(tag1, tag2))
+#     transition_matrix.append(local)
+#
+# print(f"Question D: T is {len(unique_tags)}")
+# for i in range(3):
+#     print(f"Question D: row {i} is {[round(i, 3) for i in transition_matrix[i]]}")
 
 
-def vert(x):
-    score_table = [[0 for _ in range(len(unique_tags))] for _ in range(len(x))]
-    best_table = [[0 for _ in range(len(unique_tags))] for _ in range(len(x))]
-    for idx, tag in enumerate(unique_tags):
-        score_table[0][idx] = emission_probability(x[0], tag)
-
-    for word_idx, word in enumerate(x[1:]):
-        for tag_idx, tag in enumerate(unique_tags):
-            best_score = 0
-            for old_tag in range(len(unique_tags)):
-                local_score = score_table[word_idx][old_tag] * transition_matrix[old_tag][tag_idx] * emission_probability(word, tag)
-                if best_score < local_score:
-                    score_table[word_idx + 1][tag_idx] = local_score
-                    best_table[word_idx + 1][tag_idx] = old_tag
-                    best_score = local_score
-
-    current_best = np.argmax(best_table[len(x)-1])
-    out = [unique_tags[current_best]]
-    for i in range(len(x)-1, 0, -1):
-        current_best = best_table[i][current_best]
-        out.append(unique_tags[current_best])
-    out.reverse()
-    return out
-
-
+print(emission_probability("Reliance", "VERB"))
 sentences = []
 local_sent = []
 num_found = 0
@@ -161,6 +104,5 @@ num_correct = 0
 for sentence in sentences:
     out = vert([i[0] for i in sentence])
     num_correct += len([i for idx, i in enumerate(out) if i == sentence[idx][1]])
-
 
 print(num_correct / len(test_tagged_words))
