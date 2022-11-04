@@ -60,6 +60,7 @@ class HMM:
         hidden_combined_to_denominator_key: Dict[Tuple[int, 2], Any] = {}
         hidden_combined_to_count: Dict[Tuple[int, 2], int] = defaultdict(int)
         for idx, obv_and_hid in enumerate(observed_and_hidden):
+            # Takes the current index idx as y_i-1 and then does p(y | y_i-1)
             cur_hidden = obv_and_hid[1]
             try:
                 next_hidden = observed_and_hidden[idx + 1][1]
@@ -127,10 +128,8 @@ class HMM:
             for seq in test_data:
                 out = gibbs_sampling([i[0] for i in seq], self.possible_hiddens, self.transition_matrix,
                                      self.observed_to_emission_probabilities, self.hidden_to_idx)
-                # print(seq)
                 num_correct += len([i for idx, i in enumerate(out) if i == seq[idx][1]])
-            print(num_correct / len(test_tagged_words))
-            # raise NotImplementedError("Gibbs isn't Implemented!")
+            return num_correct / len(test_tagged_words)
         elif algorithm == InferenceMethods.VARIATIONAL_INFERENCE:
             raise NotImplementedError("Variational Inference is not Implemented!")
         elif algorithm == InferenceMethods.CONSTRAINED_INFERENCE:
@@ -139,29 +138,75 @@ class HMM:
             raise NotImplementedError("Integer Programming is not Implemented!")
 
 
+class Baseline:
+    def __init__(self):
+        self.hidden_to_idx = {}
+        self.vocabulary = None
+        self.possible_hiddens = None
+        self.word_to_tag = None
+        self.tag_to_tag = None
+
+    def fit(self, observed_and_hidden):
+        self.vocabulary, self.possible_hiddens = set(), []
+        for observed, hidden in observed_and_hidden:
+            self.vocabulary.add(observed)
+            if hidden not in self.possible_hiddens:
+                self.possible_hiddens.append(hidden)
+
+        print(len(self.possible_hiddens))
+        for idx, hidden in enumerate(self.possible_hiddens):
+            self.hidden_to_idx[hidden] = idx
+
+        self.word_to_tag = keydefaultdict(
+            lambda x: [0 for _ in self.possible_hiddens] if x in self.vocabulary else self.possible_hiddens[0])
+        self.tag_to_tag = defaultdict(lambda: [0 for _ in self.possible_hiddens])
+
+        for idx, word_tag in enumerate(observed_and_hidden):
+            word = word_tag[0]
+            current_tag = word_tag[1]
+            current_tag_idx = self.hidden_to_idx[current_tag]
+            self.word_to_tag[word][current_tag_idx] += 1
+
+            if idx != len(observed_and_hidden) -1:
+                next_label = observed_and_hidden[idx + 1][1]
+                next_label_idx = self.hidden_to_idx[next_label]
+                self.tag_to_tag[current_tag_idx][next_label_idx] += 1
+
+        for key in self.word_to_tag:
+            self.word_to_tag[key] = np.argmax(self.word_to_tag[key])
+        for key in self.tag_to_tag:
+            self.tag_to_tag[key] = np.argmax(self.tag_to_tag[key])
+
+    def inference(self, test_data):
+        no_correct = 0
+        total = 0
+        for seq in test_data:
+            for word, tag in seq:
+                pred = self.word_to_tag[word]
+                try:
+                    pred = self.possible_hiddens[pred]
+                except TypeError:
+                    pass
+                if pred == tag:
+                    no_correct += 1
+                total += 1
+        return no_correct / total
+
+
+
 if __name__ == "__main__":
     # Sanity checks
     np.random.seed(225530)
-    nltk_data = list(nltk.corpus.treebank.tagged_sents())
+    nltk_data = list(nltk.corpus.brown.tagged_sents())
     train_set, test_set = train_test_split(nltk_data, train_size=0.95, test_size=0.05, random_state=123)
     train_tagged_words = [tup for sent in train_set for tup in sent]
     test_tagged_words = [tup for sent in test_set for tup in sent]
+
+    baseline = Baseline()
+    baseline.fit(train_tagged_words)
+
     test = HMM()
     test.fit(train_tagged_words)
-    print(test.observed_to_emission_probabilities)
-    print(test.transition_matrix)
-
-    for potential_tag in test.possible_hiddens:
-        running_sum = 0
-        for word in test.observed_to_emission_probabilities.keys():
-            running_sum += test.observed_to_emission_probabilities[word][potential_tag]
-        print(running_sum == 1, running_sum)
-    print("=====")
-    for idx, potential_tags in enumerate(test.possible_hiddens):
-        running_sum = 0
-        for idx_2, potential_tags_2 in enumerate(test.possible_hiddens):
-            running_sum += test.transition_matrix[idx][idx_2]
-        print(running_sum == 1, running_sum)
 
     sentences = []
     local_sent = []
@@ -176,13 +221,22 @@ if __name__ == "__main__":
         else:
             local_sent.append(item)
 
-    # Sanity Check
-    # for sentence in sentences[0:3]:
-    #     print([i[0] for i in sentence])
-    #     print([i[1] for i in sentence])
-    #     print(viterbi([i[0] for i in sentence], test.possible_hiddens, test.transition_matrix,
-    #                   test.observed_to_emission_probabilities))
-    correct = test.inference(sentences, algorithm=InferenceMethods.VITERBI)
-    print(correct)
-    correct = test.inference(sentences, algorithm=InferenceMethods.GIBBS)
-    print(correct)
+    accuracy = baseline.inference(sentences)
+    print(f"Baseline: {accuracy}")
+    accuracy = test.inference(sentences, algorithm=InferenceMethods.VITERBI)
+    print(f"Viterbi: {accuracy}")
+    accuracy = test.inference(sentences, algorithm=InferenceMethods.GIBBS)
+    print(f"Gibbs: {accuracy}")
+
+    # Can be used to verify proper probability distributions
+    # for potential_tag in test.possible_hiddens:
+    #     running_sum = 0
+    #     for word in test.observed_to_emission_probabilities.keys():
+    #         running_sum += test.observed_to_emission_probabilities[word][potential_tag]
+    #
+    # for idx, potential_tags in enumerate(test.possible_hiddens):
+    #     running_sum = 0
+    #     for idx_2, potential_tags_2 in enumerate(test.possible_hiddens):
+    #         running_sum += test.transition_matrix[idx][idx_2]
+
+

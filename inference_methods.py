@@ -4,6 +4,7 @@ import numpy as np
 
 np.random.seed(225530)
 
+
 def viterbi(observed_sequence: List[Any], possible_hidden_states: List[Any], transition_matrix: List[List[float]],
             seq_item_to_emission_probabilities: Dict[Any, Dict[Any, float]]):
     """Implements viterbi for a model that has transition and emission probabilities with a markov assumption.
@@ -37,8 +38,9 @@ def viterbi(observed_sequence: List[Any], possible_hidden_states: List[Any], tra
 def gibbs_sampling(observed_sequence: List[Any], possible_hidden_states: List[Any],
                    transition_matrix: List[List[float]],
                    seq_item_to_emission_probabilities: Dict[Any, Dict[Any, float]],
-                   hidden_to_idx: Dict[Any, int]):
+                   hidden_to_idx: Dict[Any, int], no_iterations: int = 5):
     initial_guess = [[i, possible_hidden_states[0]] for i in observed_sequence]
+
     # print(f"CHECK ME : {possible_hidden_states}")
     def get_denominator(current_observed, prev_hidden=None, next_hidden=None):
         res = 0
@@ -56,14 +58,14 @@ def gibbs_sampling(observed_sequence: List[Any], possible_hidden_states: List[An
                    * seq_item_to_emission_probabilities[current_observed][hidden]
         return res
 
-    for i in range(20):
+    for i in range(no_iterations):
         for idx, x_and_y in enumerate(initial_guess):
             if idx != 0:
-                prev_hidden = hidden_to_idx[initial_guess[idx-1][1]]
+                prev_hidden = hidden_to_idx[initial_guess[idx - 1][1]]
             else:
                 prev_hidden = None
             if idx != len(initial_guess) - 1:
-                next_hidden = hidden_to_idx[initial_guess[idx+1][1]]
+                next_hidden = hidden_to_idx[initial_guess[idx + 1][1]]
             else:
                 next_hidden = None
 
@@ -80,12 +82,9 @@ def gibbs_sampling(observed_sequence: List[Any], possible_hidden_states: List[An
                 else:
                     p_current_y = 1
                 numer = p_next_y \
-                       * p_current_y \
-                       * seq_item_to_emission_probabilities[x_and_y[0]][hidden]
+                        * p_current_y \
+                        * seq_item_to_emission_probabilities[x_and_y[0]][hidden]
                 distribution.append(numer / local_const_denominator)
-
-            # print(f"Before :{initial_guess[idx][1]}")
-            initial_guess[idx][1] = possible_hidden_states[np.random.choice(range(len(possible_hidden_states)), p=distribution)]
-            # print(f"After :{initial_guess[idx][1]}")
-
+            initial_guess[idx][1] = possible_hidden_states[
+                np.random.choice(range(len(possible_hidden_states)), p=distribution)]
     return [i[1] for i in initial_guess]
