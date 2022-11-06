@@ -1,12 +1,14 @@
+import datetime
 import enum
 from collections import defaultdict
 from typing import List, Set, Any, Tuple, Dict
 import scipy
+import tqdm
 import nltk
 import numpy as np
 from sklearn.model_selection import train_test_split
 
-from inference_methods import viterbi, gibbs_sampling
+from inference_methods import viterbi, gibbs_sampling, variational_inference
 
 
 # Needed since we want different defaults if it is in or not in the dictionary
@@ -47,11 +49,19 @@ class HMM:
             self._hidden_occurences[hidden] += 1
 
         for possible_words in self.vocabulary:
+            local_normalization = 0
             for hiddens in self.possible_hiddens:
                 current_count = self.observed_to_emission_probabilities[possible_words][hiddens]
-                self.observed_to_emission_probabilities[possible_words][hiddens] = current_count / \
-                                                                                   self._hidden_occurences[
-                                                                                       hiddens]
+                if current_count == 0:
+                    self.observed_to_emission_probabilities[possible_words][hiddens] = 1E-20
+                else:
+                    self.observed_to_emission_probabilities[possible_words][hiddens] = current_count / \
+                                                                                       self._hidden_occurences[
+                                                                                           hiddens]
+                local_normalization += self.observed_to_emission_probabilities[possible_words][hiddens]
+
+            for hiddens in self.possible_hiddens:
+                self.observed_to_emission_probabilities[possible_words][hiddens] /= local_normalization
 
     def _build_transition_probabilities(self, observed_and_hidden: List[Tuple[Any, Any]]):
         """
@@ -78,7 +88,7 @@ class HMM:
                 if (cur_idx, next_idx) not in hidden_combined_to_denominator_key:
                     # These two tags never appear together in the dataset, make it a small non-zero
                     # value (type of smoothing)
-                    sub_list.append(1E-5)
+                    sub_list.append(1E-12)
                 else:
                     numerator = hidden_combined_to_count[(cur_idx, next_idx)]
                     denominator = self._hidden_occurences[hidden_combined_to_denominator_key[(cur_idx, next_idx)]]
@@ -117,21 +127,31 @@ class HMM:
         """
         if algorithm == InferenceMethods.VITERBI:
             num_correct: int = 0
-            for seq in test_data:
+            total: int = 0
+            for seq in tqdm.tqdm(test_data):
                 out = viterbi([i[0] for i in seq], self.possible_hiddens, self.transition_matrix,
                               self.observed_to_emission_probabilities)
                 num_correct += len([i for idx, i in enumerate(out) if i == seq[idx][1]])
-
-            return num_correct / len(test_tagged_words)
+                total += len(seq)
+            return num_correct / total
         elif algorithm == InferenceMethods.GIBBS:
             num_correct: int = 0
-            for seq in test_data:
+            total: int = 0
+            for seq in tqdm.tqdm(test_data):
+                total += len(seq)
                 out = gibbs_sampling([i[0] for i in seq], self.possible_hiddens, self.transition_matrix,
-                                     self.observed_to_emission_probabilities, self.hidden_to_idx)
+                                     self.observed_to_emission_probabilities, self.hidden_to_idx, no_iterations=50)
                 num_correct += len([i for idx, i in enumerate(out) if i == seq[idx][1]])
-            return num_correct / len(test_tagged_words)
+            return num_correct / total
         elif algorithm == InferenceMethods.VARIATIONAL_INFERENCE:
-            raise NotImplementedError("Variational Inference is not Implemented!")
+            num_correct: int = 0
+            total: int = 0
+            for seq in tqdm.tqdm(test_data):
+                out = variational_inference([i[0] for i in seq], self.possible_hiddens, self.transition_matrix,
+                                            self.observed_to_emission_probabilities, )
+                total += len(seq)
+                num_correct += len([i for idx, i in enumerate(out) if i == seq[idx][1]])
+            return num_correct / total
         elif algorithm == InferenceMethods.CONSTRAINED_INFERENCE:
             raise NotImplementedError("Constrained Inference is not Implemented!")
         elif algorithm == InferenceMethods.INTEGER_PROGRAMMING:
@@ -167,7 +187,7 @@ class Baseline:
             current_tag_idx = self.hidden_to_idx[current_tag]
             self.word_to_tag[word][current_tag_idx] += 1
 
-            if idx != len(observed_and_hidden) -1:
+            if idx != len(observed_and_hidden) - 1:
                 next_label = observed_and_hidden[idx + 1][1]
                 next_label_idx = self.hidden_to_idx[next_label]
                 self.tag_to_tag[current_tag_idx][next_label_idx] += 1
@@ -193,11 +213,10 @@ class Baseline:
         return no_correct / total
 
 
-
 if __name__ == "__main__":
     # Sanity checks
     np.random.seed(225530)
-    nltk_data = list(nltk.corpus.brown.tagged_sents())
+    nltk_data = list(nltk.corpus.treebank.tagged_sents())
     train_set, test_set = train_test_split(nltk_data, train_size=0.95, test_size=0.05, random_state=123)
     train_tagged_words = [tup for sent in train_set for tup in sent]
     test_tagged_words = [tup for sent in test_set for tup in sent]
@@ -220,13 +239,22 @@ if __name__ == "__main__":
 
         else:
             local_sent.append(item)
+    accuracy_b = baseline.inference(sentences)
+    print(f"Baseline: {accuracy_b}")
+    # TODO: Viterbi degrades in performance when using all words in a row (instead of sentences) - perhaps there is a bug?
+    accuracy_g = test.inference(sentences, algorithm=InferenceMethods.GIBBS)
+    print(f"Gibbs: {accuracy_g}")
+    accuracy_v = test.inference(sentences, algorithm=InferenceMethods.VITERBI)
+    print(f"Viterbi: {accuracy_v}")
+    accuracy_vi = test.inference(sentences, algorithm=InferenceMethods.VARIATIONAL_INFERENCE)
+    print(f"Variational Inference: {accuracy_vi}")
+    with open(f"Results.txt", "w") as f:
+        f.write(f"RUN {datetime.datetime.now()}\n")
+        f.write(f"Baseline: {accuracy_b}\n")
+        f.write(f"Viterbi: {accuracy_v}\n")
+        f.write(f"Gibbs: {accuracy_g}\n")
+        f.write(f"Variational Inference: {accuracy_vi}\n")
 
-    accuracy = baseline.inference(sentences)
-    print(f"Baseline: {accuracy}")
-    accuracy = test.inference(sentences, algorithm=InferenceMethods.VITERBI)
-    print(f"Viterbi: {accuracy}")
-    accuracy = test.inference(sentences, algorithm=InferenceMethods.GIBBS)
-    print(f"Gibbs: {accuracy}")
 
     # Can be used to verify proper probability distributions
     # for potential_tag in test.possible_hiddens:
@@ -238,5 +266,3 @@ if __name__ == "__main__":
     #     running_sum = 0
     #     for idx_2, potential_tags_2 in enumerate(test.possible_hiddens):
     #         running_sum += test.transition_matrix[idx][idx_2]
-
-

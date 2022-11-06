@@ -1,3 +1,5 @@
+import multiprocessing
+from multiprocessing import Process
 from typing import List, Any, Dict
 
 import numpy as np
@@ -8,7 +10,7 @@ np.random.seed(225530)
 def viterbi(observed_sequence: List[Any], possible_hidden_states: List[Any], transition_matrix: List[List[float]],
             seq_item_to_emission_probabilities: Dict[Any, Dict[Any, float]]):
     """Implements viterbi for a model that has transition and emission probabilities with a markov assumption.
-    Finds the most likely sequence for a given observed sequence. Observed sequence should be an embedded version
+    Finds the most likely sequence for a given observed sequence.
     """
     score_table: List[List[int]] = [[0 for _ in range(len(transition_matrix))] for _ in range(len(observed_sequence))]
     best_table: List[List[int]] = [[0 for _ in range(len(transition_matrix))] for _ in range(len(observed_sequence))]
@@ -88,3 +90,81 @@ def gibbs_sampling(observed_sequence: List[Any], possible_hidden_states: List[An
             initial_guess[idx][1] = possible_hidden_states[
                 np.random.choice(range(len(possible_hidden_states)), p=distribution)]
     return [i[1] for i in initial_guess]
+
+
+def variational_inference(observed_sequence, possible_hidden_states, transition_matrix: List[List[float]],
+                          seq_item_to_emission_probabilities: Dict[Any, Dict[Any, float]]):
+    """ len(observed_sequence) = N
+    """
+    q = []
+    for i in observed_sequence:
+        local_list = np.random.random(len(possible_hidden_states))
+        local_list = local_list / sum(local_list)
+        q.append(local_list)
+
+    # def sub_calculate(q_i, q_idx, y_i, y_idx, update_dict):
+    #     running_sum = 0
+    #     # Computes P(X_i, Y_i-1, y_i, y_i+1)
+    #     # Marginalize y_i-1 and y_i+1
+    #     for y_i_minus_1_idx, y_i_minus_1 in enumerate(possible_hidden_states):
+    #         for y_i_plus_1_idx, y_i_plus_1 in enumerate(possible_hidden_states):
+    #             prob_before = 1 if q_idx == 0 else q[q_idx - 1][y_i_minus_1_idx]
+    #             prob_after = 1 if q_idx == len(q) - 1 else q[q_idx + 1][y_i_plus_1_idx]
+    #
+    #             transition_before = 1 if q_idx == 0 else transition_matrix[y_i_minus_1_idx][y_idx]
+    #             transition_after = 1 if q_idx == len(q) - 1 else transition_matrix[y_idx][y_i_plus_1_idx]
+    #             running_sum += np.log(
+    #                 seq_item_to_emission_probabilities[observed_sequence[q_idx]][y_i] \
+    #                 * transition_before \
+    #                 * transition_after
+    #             ) * prob_before * prob_after
+    #     update_dict.put((y_idx, np.exp(running_sum) + 1E-15))  # in case np.exp(x) is too small
+
+    def calculate(q_i, q_idx, update_dict):
+        q_i_update = np.array([0.0 for _ in range(len(possible_hidden_states))])
+        threads = []
+        local_update = multiprocessing.Queue()
+        for y_idx, y_i in enumerate(possible_hidden_states):
+            running_sum = 0
+            for y_i_minus_1_idx, y_i_minus_1 in enumerate(possible_hidden_states):
+                for y_i_plus_1_idx, y_i_plus_1 in enumerate(possible_hidden_states):
+                    prob_before = 1 if q_idx == 0 else q[q_idx - 1][y_i_minus_1_idx]
+                    prob_after = 1 if q_idx == len(q) - 1 else q[q_idx + 1][y_i_plus_1_idx]
+
+                    transition_before = 1 if q_idx == 0 else transition_matrix[y_i_minus_1_idx][y_idx]
+                    transition_after = 1 if q_idx == len(q) - 1 else transition_matrix[y_idx][y_i_plus_1_idx]
+                    running_sum += np.log(
+                        seq_item_to_emission_probabilities[observed_sequence[q_idx]][y_i] \
+                        * transition_before \
+                        * transition_after
+                    ) * prob_before * prob_after
+            q_i_update[y_idx] = np.exp(running_sum) + 1E-15
+        q_i_update = q_i_update / sum(q_i_update)
+        update_dict.put((q_idx, q_i_update))
+
+    for i in range(15):
+        threads = []
+        update_dict = multiprocessing.Queue()
+        for q_idx, q_i in enumerate(q):
+            # q_i should be 1 x K
+            t = Process(target=calculate, args=(q_i,q_idx, update_dict))
+            threads.append(t)
+            t.start()
+        final = [thread.join() for thread in threads]
+        all_eq = 0
+        for i in range(len(q)):
+            key, value = update_dict.get()
+            prev_values = q[key]
+
+            equal = 0
+            for prev, val in zip(prev_values, value):
+                if abs(prev - val) <= 1E-9:
+                    equal += 1
+            if equal:
+                all_eq += 1
+            q[key] = value
+        if all_eq == len(q): break
+
+        # TODO: Figure out how this works with minimizing ELBO
+
+    return [possible_hidden_states[np.argmax(dist)] for dist in q]
