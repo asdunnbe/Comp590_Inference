@@ -53,7 +53,7 @@ class HMM:
             for hiddens in self.possible_hiddens:
                 current_count = self.observed_to_emission_probabilities[possible_words][hiddens]
                 if current_count == 0:
-                    self.observed_to_emission_probabilities[possible_words][hiddens] = 1E-20
+                    self.observed_to_emission_probabilities[possible_words][hiddens] = 1E-10
                 else:
                     self.observed_to_emission_probabilities[possible_words][hiddens] = current_count / \
                                                                                        self._hidden_occurences[
@@ -88,7 +88,7 @@ class HMM:
                 if (cur_idx, next_idx) not in hidden_combined_to_denominator_key:
                     # These two tags never appear together in the dataset, make it a small non-zero
                     # value (type of smoothing)
-                    sub_list.append(1E-12)
+                    sub_list.append(1E-10)
                 else:
                     numerator = hidden_combined_to_count[(cur_idx, next_idx)]
                     denominator = self._hidden_occurences[hidden_combined_to_denominator_key[(cur_idx, next_idx)]]
@@ -242,11 +242,11 @@ if __name__ == "__main__":
     accuracy_b = baseline.inference(sentences)
     print(f"Baseline: {accuracy_b}")
     # TODO: Viterbi degrades in performance when using all words in a row (instead of sentences) - perhaps there is a bug?
-    accuracy_g = test.inference(sentences, algorithm=InferenceMethods.GIBBS)
+    accuracy_g = test.inference([test_tagged_words], algorithm=InferenceMethods.GIBBS)
     print(f"Gibbs: {accuracy_g}")
-    accuracy_v = test.inference(sentences, algorithm=InferenceMethods.VITERBI)
+    accuracy_v = test.inference([test_tagged_words], algorithm=InferenceMethods.VITERBI)
     print(f"Viterbi: {accuracy_v}")
-    accuracy_vi = test.inference(sentences, algorithm=InferenceMethods.VARIATIONAL_INFERENCE)
+    accuracy_vi = test.inference([test_tagged_words], algorithm=InferenceMethods.VARIATIONAL_INFERENCE)
     print(f"Variational Inference: {accuracy_vi}")
     with open(f"Results.txt", "w") as f:
         f.write(f"RUN {datetime.datetime.now()}\n")

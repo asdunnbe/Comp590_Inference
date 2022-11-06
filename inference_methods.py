@@ -3,6 +3,7 @@ from multiprocessing import Process
 from typing import List, Any, Dict
 
 import numpy as np
+import tqdm
 
 np.random.seed(225530)
 
@@ -23,6 +24,9 @@ def viterbi(observed_sequence: List[Any], possible_hidden_states: List[Any], tra
             for old_tag in range(len(possible_hidden_states)):
                 local_score = score_table[word_idx][old_tag] * transition_matrix[old_tag][tag_idx] * \
                               seq_item_to_emission_probabilities[observed][hidden]
+                if local_score == 0:
+                    local_score += 1e-15
+                assert local_score > 0, "Numerical instability in viterbi detected!"
                 if best_score < local_score:
                     score_table[word_idx + 1][tag_idx] = local_score
                     best_table[word_idx + 1][tag_idx] = old_tag
@@ -122,8 +126,6 @@ def variational_inference(observed_sequence, possible_hidden_states, transition_
 
     def calculate(q_i, q_idx, update_dict):
         q_i_update = np.array([0.0 for _ in range(len(possible_hidden_states))])
-        threads = []
-        local_update = multiprocessing.Queue()
         for y_idx, y_i in enumerate(possible_hidden_states):
             running_sum = 0
             for y_i_minus_1_idx, y_i_minus_1 in enumerate(possible_hidden_states):
@@ -142,20 +144,28 @@ def variational_inference(observed_sequence, possible_hidden_states, transition_
         q_i_update = q_i_update / sum(q_i_update)
         update_dict.put((q_idx, q_i_update))
 
-    for i in range(15):
-        threads = []
-        update_dict = multiprocessing.Queue()
-        for q_idx, q_i in enumerate(q):
-            # q_i should be 1 x K
-            t = Process(target=calculate, args=(q_i,q_idx, update_dict))
-            threads.append(t)
-            t.start()
-        final = [thread.join() for thread in threads]
-        all_eq = 0
-        for i in range(len(q)):
-            key, value = update_dict.get()
-            prev_values = q[key]
+    for i in tqdm.tqdm(range(15)):
+        update_dict = multiprocessing.Queue(maxsize=len(observed_sequence))
+        update = []
+        # Only have n threads at once
+        max_no_threads = 14
+        for i in range(0, len(q), max_no_threads):
+            threads = []
+            no_queued = 0
+            for q_idx, q_i in enumerate(q[i:i+max_no_threads]):
+                no_queued += 1
+                # q_i should be 1 x K
+                t = Process(target=calculate, args=(q_i,q_idx+i, update_dict))
+                threads.append(t)
+                t.start()
+            final = [thread.join() for thread in threads]
 
+            # Stops the Queue from filling up
+            update.extend([update_dict.get() for i in range(no_queued)])
+
+        all_eq = 0
+        for key, value in update:
+            prev_values = q[key]
             equal = 0
             for prev, val in zip(prev_values, value):
                 if abs(prev - val) <= 1E-9:
