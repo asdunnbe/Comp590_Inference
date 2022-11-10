@@ -7,7 +7,7 @@ import tqdm
 import nltk
 import numpy as np
 from sklearn.model_selection import train_test_split
-
+from nltk.stem.porter import PorterStemmer
 from inference_methods import viterbi, gibbs_sampling, variational_inference
 
 
@@ -115,9 +115,22 @@ class HMM:
 
         # Handles unknown words with 1/K
         self.observed_to_emission_probabilities = keydefaultdict(
-            lambda x: defaultdict(int) if x in self.vocabulary else defaultdict(lambda: default_probability))
+            lambda x: defaultdict(lambda: 1E-15) if x in self.vocabulary else {})
         self._build_emission_probabilities(observed_and_hidden)
         self._build_transition_probabilities(observed_and_hidden)
+
+    def get_transition_probabilities(self, prev, current, *args):
+        return self.transition_matrix[prev][current]
+
+    def get_emission_probabilities(self, observed, hidden, *args):
+        try:
+            return self.observed_to_emission_probabilities[observed][hidden]
+        except KeyError:
+            # The word was not seen at all in our training set
+            return 1/len(self.possible_hiddens)
+
+    def get_possible_hiddens(self, *args):
+        return self.possible_hiddens
 
     def inference(self, test_data, algorithm: InferenceMethods = InferenceMethods.VITERBI):
         """
@@ -128,27 +141,27 @@ class HMM:
         if algorithm == InferenceMethods.VITERBI:
             num_correct: int = 0
             total: int = 0
-            for seq in tqdm.tqdm(test_data):
-                out = viterbi([i[0] for i in seq], self.possible_hiddens, self.transition_matrix,
-                              self.observed_to_emission_probabilities)
+            for seq, hidden_to_rep in tqdm.tqdm(test_data):
+                out = viterbi([i[0] for i in seq], self.get_possible_hiddens(len(seq)), self.get_transition_probabilities,
+                              self.get_emission_probabilities, hidden_to_rep)
                 num_correct += len([i for idx, i in enumerate(out) if i == seq[idx][1]])
                 total += len(seq)
             return num_correct / total
         elif algorithm == InferenceMethods.GIBBS:
             num_correct: int = 0
             total: int = 0
-            for seq in tqdm.tqdm(test_data):
+            for seq, hidden_to_rep in tqdm.tqdm(test_data):
                 total += len(seq)
-                out = gibbs_sampling([i[0] for i in seq], self.possible_hiddens, self.transition_matrix,
-                                     self.observed_to_emission_probabilities, self.hidden_to_idx, no_iterations=50)
+                out = gibbs_sampling([i[0] for i in seq], self.get_possible_hiddens(len(seq)), self.get_transition_probabilities,
+                                     self.get_emission_probabilities, self.hidden_to_idx, hidden_to_rep, no_iterations=5)
                 num_correct += len([i for idx, i in enumerate(out) if i == seq[idx][1]])
             return num_correct / total
         elif algorithm == InferenceMethods.VARIATIONAL_INFERENCE:
             num_correct: int = 0
             total: int = 0
-            for seq in tqdm.tqdm(test_data):
-                out = variational_inference([i[0] for i in seq], self.possible_hiddens, self.transition_matrix,
-                                            self.observed_to_emission_probabilities, )
+            for seq, hidden_to_rep in tqdm.tqdm(test_data):
+                out = variational_inference([i[0] for i in seq], self.get_possible_hiddens(len(seq)), self.get_transition_probabilities,
+                                            self.get_emission_probabilities, hidden_to_rep)
                 total += len(seq)
                 num_correct += len([i for idx, i in enumerate(out) if i == seq[idx][1]])
             return num_correct / total
@@ -173,7 +186,6 @@ class Baseline:
             if hidden not in self.possible_hiddens:
                 self.possible_hiddens.append(hidden)
 
-        print(len(self.possible_hiddens))
         for idx, hidden in enumerate(self.possible_hiddens):
             self.hidden_to_idx[hidden] = idx
 
@@ -200,7 +212,8 @@ class Baseline:
     def inference(self, test_data):
         no_correct = 0
         total = 0
-        for seq in test_data:
+        print(test_data)
+        for seq, _ in test_data:
             for word, tag in seq:
                 pred = self.word_to_tag[word]
                 try:
@@ -213,15 +226,131 @@ class Baseline:
         return no_correct / total
 
 
-if __name__ == "__main__":
-    # Sanity checks
-    np.random.seed(225530)
+class AlignmentHMM(HMM):
+    def __init__(self, alignment_to_word, *args, **kwargs):
+        self.alignment_to_word = alignment_to_word
+        super(AlignmentHMM, self).__init__()
+
+    def get_possible_hiddens(self, *args):
+        x = args[0]
+        return [i for i in range(x)]
+
+    def get_emission_probabilities(self, observed, hidden, *args):
+        try:
+            return self.observed_to_emission_probabilities[observed][hidden]
+        except KeyError:
+            # The word was not seen at all in our training set
+            return 1/args[0]
+
+    def get_transition_probabilities(self, prev, current, *args):
+        # args[0] should be the sequence length
+        prob = abs(current-prev) / sum([abs(k-prev) for k in range(args[0])])
+        if prob == 0:
+            prob += 1E-10
+        return prob
+
+    def _build_emission_probabilities(self, observed_and_hidden: List[Tuple[Any, Any]]):
+        idx = 0
+        local_occurences = defaultdict(int)
+        local_possible_hidden = set()
+        for observed, hidden in observed_and_hidden:
+            local_hidden = self.alignment_to_word[idx][hidden]
+            self.observed_to_emission_probabilities[observed][local_hidden] += 1
+            self._hidden_occurences[hidden] += 1
+            local_occurences[local_hidden] += 1
+            local_possible_hidden.add(local_hidden)
+            idx += 1
+
+        for possible_words in self.vocabulary:
+            local_normalization = 0
+            for hiddens in local_possible_hidden:
+                current_count = self.observed_to_emission_probabilities[possible_words][hiddens]
+                if current_count == 0:
+                    self.observed_to_emission_probabilities[possible_words][hiddens] = 1E-5
+                else:
+                    self.observed_to_emission_probabilities[possible_words][hiddens] = current_count / \
+                                                                                       local_occurences[
+                                                                                           hiddens]
+                local_normalization += self.observed_to_emission_probabilities[possible_words][hiddens]
+
+            for hiddens in local_possible_hidden:
+                self.observed_to_emission_probabilities[possible_words][hiddens] /= local_normalization
+
+
+def evaluate_alignment():
+    stemmer = PorterStemmer()
+    from nltk.corpus import comtrans
+    words = comtrans.aligned_sents('alignment-en-fr.txt')
+    words_train, words_test = train_test_split(words, train_size=0.95, test_size=0.05, random_state=123)
+    words_train_processed = []
+    words_test_processed = []
+    maps_for_training = defaultdict(dict)
+    idx = 0
+    for train in words_train:
+        seen = set()
+        for alignment in train.alignment:
+            if train.mots[alignment[1]].lower() in seen: continue
+            else:
+                english_idx = alignment[0]
+                if english_idx in maps_for_training[idx]:continue
+                else:
+                    maps_for_training[idx][english_idx] = train.words[english_idx].lower()
+                    idx += 1
+                    seen.add(train.mots[alignment[1]].lower())
+        seq = []
+        seen = set()
+        for alignment in train.alignment:
+            if train.mots[alignment[1]].lower() in seen: continue
+            else:
+                seq.append((train.mots[alignment[1]].lower(), alignment[0]))
+                seen.add(train.mots[alignment[1]].lower())
+        words_train_processed.extend(seq)
+    for idx, test in enumerate(words_test):
+        def get_default(ind):
+            try:
+                return test.words[ind]
+            except IndexError:
+                return test.words[0]
+
+        mapper = keydefaultdict(lambda ind: get_default(ind))
+        seen = set()
+        for alignment in test.alignment:
+            if test.mots[alignment[1]].lower() in seen: continue
+            english_idx = alignment[0]
+            if english_idx in maps_for_training[idx]:continue
+            else:
+                mapper[english_idx] = test.words[english_idx].lower()
+                idx += 1
+                seen.add(test.mots[alignment[1]].lower())
+        seq = []
+        seen = set()
+        for alignment in test.alignment:
+            if test.mots[alignment[1]].lower() in seen: continue
+            else:
+                seq.append((test.mots[alignment[1]].lower(), alignment[0]))
+                seen.add(test.mots[alignment[1]].lower())
+        words_test_processed.append((seq, mapper))
+
+    tester = AlignmentHMM(maps_for_training)
+    tester.fit(words_train_processed[0:500000])
+    test_seq = words_test_processed[0:1000]
+    print("Now doing inference")
+    accuracy_g = tester.inference(test_seq, algorithm=InferenceMethods.GIBBS)
+    print(f"Gibbs: {accuracy_g}")
+    accuracy_v = tester.inference(test_seq, algorithm=InferenceMethods.VITERBI)
+    print(f"Viterbi: {accuracy_v}")
+    accuracy_vi = tester.inference(test_seq, algorithm=InferenceMethods.VARIATIONAL_INFERENCE)
+    print(f"Variational Inference: {accuracy_vi}")
+
+def evaluate_pos():
     nltk_data = list(nltk.corpus.treebank.tagged_sents())
     train_set, test_set = train_test_split(nltk_data, train_size=0.95, test_size=0.05, random_state=123)
     train_tagged_words = [tup for sent in train_set for tup in sent]
     test_tagged_words = [tup for sent in test_set for tup in sent]
 
     baseline = Baseline()
+    print(len(train_tagged_words))
+    print(len(test_tagged_words))
     baseline.fit(train_tagged_words)
 
     test = HMM()
@@ -239,14 +368,21 @@ if __name__ == "__main__":
 
         else:
             local_sent.append(item)
-    accuracy_b = baseline.inference(sentences)
+    print(len(sentences))
+
+    test_seqs = [test_tagged_words]
+    processed_test_seqs = []
+    for seq in test_seqs:
+        mapped = keydefaultdict(lambda x: x)
+        processed_test_seqs.append((seq, mapped))
+
+    accuracy_b = baseline.inference(processed_test_seqs)
     print(f"Baseline: {accuracy_b}")
-    # TODO: Viterbi degrades in performance when using all words in a row (instead of sentences) - perhaps there is a bug?
-    accuracy_g = test.inference([test_tagged_words], algorithm=InferenceMethods.GIBBS)
+    accuracy_g = test.inference(processed_test_seqs, algorithm=InferenceMethods.GIBBS)
     print(f"Gibbs: {accuracy_g}")
-    accuracy_v = test.inference([test_tagged_words], algorithm=InferenceMethods.VITERBI)
+    accuracy_v = test.inference(processed_test_seqs, algorithm=InferenceMethods.VITERBI)
     print(f"Viterbi: {accuracy_v}")
-    accuracy_vi = test.inference([test_tagged_words], algorithm=InferenceMethods.VARIATIONAL_INFERENCE)
+    accuracy_vi = test.inference(processed_test_seqs, algorithm=InferenceMethods.VARIATIONAL_INFERENCE)
     print(f"Variational Inference: {accuracy_vi}")
     with open(f"Results.txt", "w") as f:
         f.write(f"RUN {datetime.datetime.now()}\n")
@@ -254,7 +390,6 @@ if __name__ == "__main__":
         f.write(f"Viterbi: {accuracy_v}\n")
         f.write(f"Gibbs: {accuracy_g}\n")
         f.write(f"Variational Inference: {accuracy_vi}\n")
-
 
     # Can be used to verify proper probability distributions
     # for potential_tag in test.possible_hiddens:
@@ -266,3 +401,10 @@ if __name__ == "__main__":
     #     running_sum = 0
     #     for idx_2, potential_tags_2 in enumerate(test.possible_hiddens):
     #         running_sum += test.transition_matrix[idx][idx_2]
+
+
+if __name__ == "__main__":
+    # Sanity checks
+    np.random.seed(225530)
+    # evaluate_pos()
+    evaluate_alignment()

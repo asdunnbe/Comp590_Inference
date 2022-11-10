@@ -4,3 +4,4 @@ import nltk
 nltk.download('treebank')
 nltk.download('universal_tagset')
 nltk.download('brown')
+nltk.download('comtrans')
