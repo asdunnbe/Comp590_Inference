@@ -8,7 +8,8 @@ import nltk
 import numpy as np
 from sklearn.model_selection import train_test_split
 from nltk.stem.porter import PorterStemmer
-from inference_methods import viterbi, gibbs_sampling, variational_inference
+from inference_methods import viterbi, gibbs_sampling, variational_inference, variational_inference_special
+from time import process_time_ns
 
 
 # Needed since we want different defaults if it is in or not in the dictionary
@@ -53,7 +54,7 @@ class HMM:
             for hiddens in self.possible_hiddens:
                 current_count = self.observed_to_emission_probabilities[possible_words][hiddens]
                 if current_count == 0:
-                    self.observed_to_emission_probabilities[possible_words][hiddens] = 1E-10
+                    self.observed_to_emission_probabilities[possible_words][hiddens] = 1E-15
                 else:
                     self.observed_to_emission_probabilities[possible_words][hiddens] = current_count / \
                                                                                        self._hidden_occurences[
@@ -88,7 +89,7 @@ class HMM:
                 if (cur_idx, next_idx) not in hidden_combined_to_denominator_key:
                     # These two tags never appear together in the dataset, make it a small non-zero
                     # value (type of smoothing)
-                    sub_list.append(1E-10)
+                    sub_list.append(1E-15)
                 else:
                     numerator = hidden_combined_to_count[(cur_idx, next_idx)]
                     denominator = self._hidden_occurences[hidden_combined_to_denominator_key[(cur_idx, next_idx)]]
@@ -132,7 +133,7 @@ class HMM:
     def get_possible_hiddens(self, *args):
         return self.possible_hiddens
 
-    def inference(self, test_data, algorithm: InferenceMethods = InferenceMethods.VITERBI):
+    def inference(self, test_data, algorithm: InferenceMethods = InferenceMethods.VITERBI, alt: bool = False):
         """
         # TODO: Implement Remaining Methods
         # TODO: Test time-to-infer
@@ -141,30 +142,40 @@ class HMM:
         if algorithm == InferenceMethods.VITERBI:
             num_correct: int = 0
             total: int = 0
+            t = process_time_ns()
             for seq, hidden_to_rep in tqdm.tqdm(test_data):
                 out = viterbi([i[0] for i in seq], self.get_possible_hiddens(len(seq)), self.get_transition_probabilities,
                               self.get_emission_probabilities, hidden_to_rep)
                 num_correct += len([i for idx, i in enumerate(out) if i == seq[idx][1]])
                 total += len(seq)
-            return num_correct / total
+            final = process_time_ns() - t
+            return num_correct / total, final
         elif algorithm == InferenceMethods.GIBBS:
             num_correct: int = 0
             total: int = 0
+            t = process_time_ns()
             for seq, hidden_to_rep in tqdm.tqdm(test_data):
                 total += len(seq)
                 out = gibbs_sampling([i[0] for i in seq], self.get_possible_hiddens(len(seq)), self.get_transition_probabilities,
                                      self.get_emission_probabilities, self.hidden_to_idx, hidden_to_rep, no_iterations=5)
                 num_correct += len([i for idx, i in enumerate(out) if i == seq[idx][1]])
-            return num_correct / total
+            final = process_time_ns() - t
+            return num_correct / total, final
         elif algorithm == InferenceMethods.VARIATIONAL_INFERENCE:
             num_correct: int = 0
             total: int = 0
+            t = process_time_ns()
             for seq, hidden_to_rep in tqdm.tqdm(test_data):
-                out = variational_inference([i[0] for i in seq], self.get_possible_hiddens(len(seq)), self.get_transition_probabilities,
-                                            self.get_emission_probabilities, hidden_to_rep)
+                if alt:
+                    out = variational_inference_special([i[0] for i in seq], self.get_possible_hiddens(len(seq)), self.get_transition_probabilities,
+                                                self.get_emission_probabilities, hidden_to_rep)
+                else:
+                    out = variational_inference([i[0] for i in seq], self.get_possible_hiddens(len(seq)), self.get_transition_probabilities,
+                                                self.get_emission_probabilities, hidden_to_rep)
                 total += len(seq)
                 num_correct += len([i for idx, i in enumerate(out) if i == seq[idx][1]])
-            return num_correct / total
+            final = process_time_ns() - t
+            return num_correct / total, final
         elif algorithm == InferenceMethods.CONSTRAINED_INFERENCE:
             raise NotImplementedError("Constrained Inference is not Implemented!")
         elif algorithm == InferenceMethods.INTEGER_PROGRAMMING:
@@ -333,7 +344,7 @@ def evaluate_alignment():
 
     tester = AlignmentHMM(maps_for_training)
     tester.fit(words_train_processed[0:500000])
-    test_seq = words_test_processed[0:1000]
+    test_seq = words_test_processed[0:10]
     print("Now doing inference")
     accuracy_g = tester.inference(test_seq, algorithm=InferenceMethods.GIBBS)
     print(f"Gibbs: {accuracy_g}")
@@ -341,6 +352,8 @@ def evaluate_alignment():
     print(f"Viterbi: {accuracy_v}")
     accuracy_vi = tester.inference(test_seq, algorithm=InferenceMethods.VARIATIONAL_INFERENCE)
     print(f"Variational Inference: {accuracy_vi}")
+    accuracy_vi_s = tester.inference(test_seq, algorithm=InferenceMethods.VARIATIONAL_INFERENCE, alt=True)
+    print(f"Variational Inference SPECIAL: {accuracy_vi_s}")
 
 def evaluate_pos():
     nltk_data = list(nltk.corpus.treebank.tagged_sents())
@@ -376,14 +389,18 @@ def evaluate_pos():
         mapped = keydefaultdict(lambda x: x)
         processed_test_seqs.append((seq, mapped))
 
-    accuracy_b = baseline.inference(processed_test_seqs)
-    print(f"Baseline: {accuracy_b}")
-    accuracy_g = test.inference(processed_test_seqs, algorithm=InferenceMethods.GIBBS)
-    print(f"Gibbs: {accuracy_g}")
-    accuracy_v = test.inference(processed_test_seqs, algorithm=InferenceMethods.VITERBI)
-    print(f"Viterbi: {accuracy_v}")
+    processed_test_seqs = [(processed_test_seqs[0][0][0:1000], processed_test_seqs[0][1])]
+    print(processed_test_seqs)
+    # accuracy_b = baseline.inference(processed_test_seqs)
+    # print(f"Baseline: {accuracy_b}")
+    # accuracy_g = test.inference(processed_test_seqs, algorithm=InferenceMethods.GIBBS)
+    # print(f"Gibbs: {accuracy_g}")
+    # accuracy_v = test.inference(processed_test_seqs, algorithm=InferenceMethods.VITERBI)
+    # print(f"Viterbi: {accuracy_v}")
     accuracy_vi = test.inference(processed_test_seqs, algorithm=InferenceMethods.VARIATIONAL_INFERENCE)
     print(f"Variational Inference: {accuracy_vi}")
+    accuracy_vi_s = test.inference(processed_test_seqs, algorithm=InferenceMethods.VARIATIONAL_INFERENCE, alt=True)
+    print(f"Variational Inference SPECIAL: {accuracy_vi_s}")
     with open(f"Results.txt", "w") as f:
         f.write(f"RUN {datetime.datetime.now()}\n")
         f.write(f"Baseline: {accuracy_b}\n")
