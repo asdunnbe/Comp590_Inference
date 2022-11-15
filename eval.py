@@ -52,8 +52,10 @@ def evaluate_predictions(test_name, test_words, hidden_predict):
         Recall = TP / (TP + FN)
         F_score = 2 * ((Precision * Recall) / (Precision + Recall))
 
-        data = ['Average', Accuracy, Precision, Recall, F_score, len(hidden_true)]
+        data = [test_name, Accuracy, Precision, Recall, F_score, len(hidden_true)]
         writer.writerow(data)
 
     print(f'The average result for experiment {test_name} are:')
     print(f'Accuracy: {data[1]}    Precision: {data[2]}    Recall: {data[2]}    F_score: {data[4]}')
+
+    return data
