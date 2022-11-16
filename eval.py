@@ -7,6 +7,7 @@ Returrns CSV file with Accuracy, Precision, Recall, F_score, and Support for eac
 INPUT    test_name : used to create path for csv file
         test_words : must be list of tuples
     hidden_predict : return from inference method
+              time : test time ffed in and added to csv
 
 OUTPUT  The function ccreates a csv file with the evaluation metrics seen above.
         Prints the average metrics for all the tags
@@ -40,7 +41,7 @@ def evaluate_predictions(test_name, test_words, hidden_predict, time):
         writer.writerow(time_row)
 
         print(f'The average result for experiment {test_name} are:')
-        print(f'Precision: {data[1]}    Recall: {data[2]}    F_score: {data[3]}')
+        print(f'Accuracy: {data[1]}    Precision: {data[2]}    Recall: {data[3]}    F_score: {data[4]}')
 
         # print(classification_report(hidden_true, hidden_predict, labels=tags))
 
