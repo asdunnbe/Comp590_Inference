@@ -14,7 +14,7 @@ OUTPUT  The function ccreates a csv file with the evaluation metrics seen above.
 
 """
 
-def evaluate_predictions(test_name, test_words, hidden_predict):
+def evaluate_predictions(test_name, test_words, hidden_predict, time):
     hidden_true = [w[1] for w in test_words]
     tags = [lab for lab in set(hidden_true)]
 
@@ -34,10 +34,13 @@ def evaluate_predictions(test_name, test_words, hidden_predict):
         data = [test_name, precisions[i], recalls[i], fbeta_scores[i], supports[i]]
         writer.writerow(data)
 
+        time_row = ['Inference time', time]
+        writer.writerow(time_row)
+
         print(f'The average result for experiment {test_name} are:')
         print(f'Precision: {data[1]}    Recall: {data[2]}    F_score: {data[3]}')
 
-        print(classification_report(hidden_true, hidden_predict, labels=tags))
+        # print(classification_report(hidden_true, hidden_predict, labels=tags))
 
     return data
 
