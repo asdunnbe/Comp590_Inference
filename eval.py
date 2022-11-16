@@ -1,4 +1,4 @@
-from sklearn.metrics import precision_recall_fscore_support, classification_report
+from sklearn.metrics import precision_recall_fscore_support, classification_report, confusion_matrix
 import csv  
 
 """
@@ -25,13 +25,15 @@ def evaluate_predictions(test_name, test_words, hidden_predict, time):
         writer.writerow(header)
 
         precisions, recalls, fbeta_scores, supports = precision_recall_fscore_support(hidden_true, hidden_predict, average='macro', labels=tags)
+        
+        acc = confusion_matrix(hidden_true, hidden_predict, labels=tags)
+        accuracy = acc.diagonal()/acc.sum(axis=1)
 
         for i in range(len(tags)):
-            data = [tags[i], precisions[i], recalls[i], fbeta_scores[i], supports[i]]
+            data = [tags[i], accuracy[i], precisions[i], recalls[i], fbeta_scores[i], supports[i]]
             writer.writerow(data)
 
-        precisions, recalls, fbeta_scores, supports = precision_recall_fscore_support(hidden_true, hidden_predict, average='macro')
-        data = [test_name, precisions[i], recalls[i], fbeta_scores[i], supports[i]]
+        data = [test_name, avg(accuracy), avg(precisions), avg(recalls), avg(fbeta_scores), avg(supports)]
         writer.writerow(data)
 
         time_row = ['Inference time', time]
@@ -44,6 +46,8 @@ def evaluate_predictions(test_name, test_words, hidden_predict, time):
 
     return data
 
+def avg(list_name):
+    return sum(list_name) / len(list_name)
 
 
 
