@@ -403,9 +403,9 @@ def evaluate_pos():
     print(f"Variational Inference SPECIAL: {accuracy_vi_s}")
     with open(f"Results.txt", "w") as f:
         f.write(f"RUN {datetime.datetime.now()}\n")
-        f.write(f"Baseline: {accuracy_b}\n")
-        f.write(f"Viterbi: {accuracy_v}\n")
-        f.write(f"Gibbs: {accuracy_g}\n")
+        # f.write(f"Baseline: {accuracy_b}\n")
+        # f.write(f"Viterbi: {accuracy_v}\n")
+        # f.write(f"Gibbs: {accuracy_g}\n")
         f.write(f"Variational Inference: {accuracy_vi}\n")
 
     # Can be used to verify proper probability distributions
