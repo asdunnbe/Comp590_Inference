@@ -137,7 +137,6 @@ class HMM:
         """
         # TODO: Implement Remaining Methods
         # TODO: Test time-to-infer
-        # TODO: Report all evaluation metrics we care about
         """
         if algorithm == InferenceMethods.VITERBI:
             num_correct: int = 0
